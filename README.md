@@ -11,7 +11,26 @@ Se instala con **3 comandos** en cualquier equipo con Docker. Usuario, credencia
 ```bash
 git clone https://github.com/CHPaez/rag-demo-n8n.git
 cd rag-demo-n8n
-./setup.sh              # abre la pantalla de configuración: revisás, editás y desplegás
+python3 setup_web.py    # formulario web: configurás, desplegás y probás desde el navegador
+                        # (alternativa sin navegador: ./setup.sh, ver "Opción B")
+```
+
+### Opción A (recomendada): formulario web
+
+`setup_web.py` levanta un asistente en tu propio equipo (solo Python 3, sin instalar nada) y muestra en la terminal una URL del tipo `http://127.0.0.1:8099/?t=...`. Abrila en el navegador; tiene tres pasos:
+
+1. **Configuración:** la API key de OpenAI (con botón **Validar**, que consulta a OpenAI sin gastar crédito), correo y contraseña del administrador, puerto y zona horaria. Los secretos van enmascarados.
+2. **Desplegar:** guarda `.env`, levanta los contenedores y muestra el registro en vivo (la primera vez descarga ~2.5 GB).
+3. **Probar:** chequeos automáticos (n8n, login, credenciales, pgvector), botón **Vectorizar manual**, y un buscador que muestra los **4 trozos del manual más cercanos a tu pregunta**, que es justo lo que recibe el agente antes de responder. Incluye enlaces para abrir n8n y el chat con el agente.
+
+Si el servidor es remoto, abrí un túnel y usá la misma URL en tu navegador: `ssh -L 8099:127.0.0.1:8099 usuario@IP_DEL_SERVIDOR`.
+
+> **Seguridad del asistente:** escucha solo en `127.0.0.1`, exige el token de un solo uso de la URL y rechaza peticiones con un `Host` ajeno. Se detiene con `Ctrl+C`. Si el puerto 8099 está ocupado: `WIZARD_PORT=8123 python3 setup_web.py`.
+
+### Opción B: pantalla en la terminal
+
+```bash
+./setup.sh
 ```
 
 `setup.sh` muestra una **pantalla** con todos los datos editables antes de desplegar. Los secretos aparecen enmascarados (`v` los muestra u oculta):
@@ -160,6 +179,7 @@ docker compose down -v             # apagar y BORRAR todo (flujos, credenciales,
 
 Probado en una **copia limpia del repo, sin nada previo**, con `./setup.sh` y `docker compose up -d`:
 
+- El **formulario web** (`setup_web.py`) pasó 45 pruebas automáticas contra su API, sobre una copia limpia: seguridad (token, `Host` ajeno), validaciones, guardado de `.env` (permisos 600), despliegue, chequeos, vectorización, búsqueda (4 trozos ordenados por cercanía) y redespliegue sin perder los vectores. El JavaScript de la página se validó sintácticamente, pero **la interfaz no se revisó visualmente en un navegador**: si algo se ve raro, avisá.
 - La **pantalla de configuración** (`./setup.sh`) se probó de punta a punta: editar la key y el puerto, desplegar, y comprobar que la key llega a la credencial de n8n. También se comprobó que rechaza entradas inválidas y que, sobre un despliegue existente, bloquea la clave de la base y la de cifrado.
 - El administrador se crea solo y **el login funciona** con las credenciales generadas.
 - Se crean las dos credenciales y los dos flujos, ya enlazados (sin nodos en rojo).
@@ -189,7 +209,8 @@ Probado en una **copia limpia del repo, sin nada previo**, con `./setup.sh` y `d
 
 ```
 .
-├── setup.sh                    # genera .env con claves aleatorias
+├── setup_web.py                # asistente web: configurar, desplegar y probar
+├── setup.sh                    # alternativa en terminal (pantalla de configuración)
 ├── docker-compose.yml          # n8n + PostgreSQL con pgvector
 ├── .env.example                # plantilla de configuración
 ├── scripts/bootstrap.sh        # crea admin, credenciales e importa flujos al arrancar
