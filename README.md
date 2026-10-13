@@ -11,11 +11,34 @@ Se instala con **3 comandos** en cualquier equipo con Docker. Usuario, credencia
 ```bash
 git clone https://github.com/CHPaez/rag-demo-n8n.git
 cd rag-demo-n8n
-./setup.sh              # pide tu API key de OpenAI y genera .env con todas las claves
-docker compose up -d    # la primera vez descarga ~2.5 GB de imágenes
+./setup.sh              # abre la pantalla de configuración: revisás, editás y desplegás
 ```
 
-Abrí **http://localhost:5678** e ingresá con el correo y la contraseña que mostró `setup.sh` (también están en `.env`). Ya vas a encontrar:
+`setup.sh` muestra una **pantalla** con todos los datos editables antes de desplegar. Los secretos aparecen enmascarados (`v` los muestra u oculta):
+
+```
+  Editable
+   1) OpenAI API key        sk-...ab12
+   2) Admin email           admin@example.com
+   3) Admin password        Dem...f1
+   4) Admin name            Demo RAG
+   5) n8n port (localhost)  5678
+   6) Timezone              America/Bogota
+
+  Generated automatically
+   7) Database password     c59...19e1
+   8) n8n encryption key    627...2f3a
+
+  [1-8] edit   [v] show/hide secrets   [s] save   [d] save and deploy   [q] quit
+```
+
+1. Pulsá **`1`** y pegá tu API key de OpenAI (no se ve mientras escribís).
+2. Revisá o cambiá lo demás. La contraseña del administrador se genera sola; con `g` en la opción 3 generás otra.
+3. Pulsá **`d`** y confirmá: guarda `.env`, levanta los contenedores (la primera vez descarga ~2.5 GB de imágenes) y avisa cuando n8n está listo.
+
+La contraseña de la base de datos y la clave de cifrado se generan solas y quedan **bloqueadas** una vez desplegado, porque cambiarlas rompería los datos y las credenciales guardadas. Para volver a abrir la pantalla y, por ejemplo, cambiar la API key, ejecutá `./setup.sh` de nuevo. Sin terminal interactiva también sirve `./setup.sh sk-tu-key`, que crea el `.env` sin pantalla, y luego `docker compose up -d`.
+
+Abrí **http://localhost:5678** e ingresá con el correo y la contraseña de la pantalla (también están en `.env`). Ya vas a encontrar:
 
 - La cuenta de administrador creada.
 - Las credenciales de **Postgres** y **OpenAI** creadas y asignadas a los nodos (nada en rojo).
@@ -137,6 +160,7 @@ docker compose down -v             # apagar y BORRAR todo (flujos, credenciales,
 
 Probado en una **copia limpia del repo, sin nada previo**, con `./setup.sh` y `docker compose up -d`:
 
+- La **pantalla de configuración** (`./setup.sh`) se probó de punta a punta: editar la key y el puerto, desplegar, y comprobar que la key llega a la credencial de n8n. También se comprobó que rechaza entradas inválidas y que, sobre un despliegue existente, bloquea la clave de la base y la de cifrado.
 - El administrador se crea solo y **el login funciona** con las credenciales generadas.
 - Se crean las dos credenciales y los dos flujos, ya enlazados (sin nodos en rojo).
 - Con una API key inválida, la ingesta llega hasta OpenAI y este responde `401`: la cadena completa está cableada.
