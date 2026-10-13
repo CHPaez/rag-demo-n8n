@@ -28,7 +28,9 @@ OPENAI_BASE = os.environ.get("RAG_OPENAI_BASE_URL", "https://api.openai.com/v1")
 EMBED_MODEL = "text-embedding-3-small"
 GEMINI_BASE = os.environ.get("RAG_GEMINI_BASE_URL", "https://generativelanguage.googleapis.com").rstrip("/")
 GEMINI_EMBED = os.environ.get("GEMINI_EMBED_MODEL", "gemini-embedding-001")
-TOKEN = secrets.token_urlsafe(16)
+# Lowercase letters and digits without look-alikes (no 0/o, 1/l/i, 5/s), because people copy this by hand.
+TOKEN_ALPHABET = "abcdefghjkmnpqrtuvwxyz234679"
+TOKEN = "".join(secrets.choice(TOKEN_ALPHABET) for _ in range(24))
 SEP = "\x1f"
 IDLE_MINUTES = float(os.environ.get("WIZARD_IDLE_MINUTES", "0"))  # 0 = never stop
 LAST_ACTIVITY = [time.time()]
