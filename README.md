@@ -2,20 +2,50 @@
 
 Demo para **consultar manuales técnicos con lenguaje natural**. Se carga un manual (por ejemplo, la interfaz HL7 de un dispositivo médico), se **vectoriza**, y un agente en n8n responde preguntas como *"¿cómo es la trama que envía el monitor?"* leyendo solo los trozos relevantes.
 
-Se levanta con **un solo comando** en cualquier equipo con Docker.
+Se instala con **3 comandos** en cualquier equipo con Docker. Usuario, credenciales y flujos se crean solos.
 
 ---
 
-## Qué usamos
+## Inicio rápido
 
-| Pieza | Para qué sirve | Detalle |
-|---|---|---|
-| **n8n** `2.42.7` | Orquesta los flujos (ingesta y chat) sin escribir código | Interfaz web en `http://localhost:5678` |
-| **PostgreSQL 18 + pgvector** `0.8.x` | Base de datos que guarda los vectores y busca por cercanía | Imagen `pgvector/pgvector:pg18` |
-| **OpenAI `text-embedding-3-small`** | Convierte texto en vectores (1536 dimensiones) | Requiere API key |
-| **OpenAI `gpt-4o-mini`** | El modelo que redacta la respuesta | Requiere API key |
+```bash
+git clone https://github.com/CHPaez/rag-demo-n8n.git
+cd rag-demo-n8n
+./setup.sh              # pide tu API key de OpenAI y genera .env con todas las claves
+docker compose up -d    # la primera vez descarga ~2.5 GB de imágenes
+```
 
-Todo corre en dos contenedores (`db` y `n8n`). Los modelos de OpenAI son llamadas externas.
+Abrí **http://localhost:5678** e ingresá con el correo y la contraseña que mostró `setup.sh` (también están en `.env`). Ya vas a encontrar:
+
+- La cuenta de administrador creada.
+- Las credenciales de **Postgres** y **OpenAI** creadas y asignadas a los nodos (nada en rojo).
+- Los dos flujos importados.
+
+**Requisitos:** Docker con Compose, una **API key de OpenAI** con crédito, ~1 GB de RAM libre y `bash` (Linux, macOS o WSL en Windows).
+
+## Usar la demo
+
+1. **Vectorizar el manual:** abrí el flujo `01 - Ingesta de manuales` y presioná **Execute workflow**. Lee la carpeta `manuales/` y guarda los vectores en la tabla `manuales`. También se puede por consola:
+   ```bash
+   docker compose exec -e N8N_RUNNERS_BROKER_PORT=5690 n8n n8n execute --id=ragIngesta01
+   ```
+2. **Preguntar:** abrí `02 - Chat con el agente`, presioná **Open chat** y probá:
+   - *¿Cómo es la trama ORU^R01 que envía el monitor?*
+   - *¿Qué significa el código de error E-214?*
+   - *¿Qué puerto usa el HIS por defecto?*
+   - *El monitor reintenta una y otra vez, ¿qué reviso?*
+
+El repo incluye `manuales/manual-ejemplo-monitor-m100.md`, un manual **ficticio** de un monitor con interfaz HL7, para probar sin datos reales.
+
+### Usar tus propios manuales
+
+Copiá los archivos (`.pdf`, `.md`, `.txt`) a `manuales/` y volvé a ejecutar la ingesta. **Ojo:** ejecutarla dos veces sobre el mismo archivo **duplica** los vectores. Para empezar de cero:
+
+```bash
+docker compose exec db psql -U rag -d rag -c "DROP TABLE manuales;"
+```
+
+---
 
 ## Cómo funciona
 
@@ -37,68 +67,30 @@ Todo corre en dos contenedores (`db` y `n8n`). Los modelos de OpenAI son llamada
 
 **La idea clave:** un modelo de *embeddings* convierte un texto en una lista de números que representa su **significado**. Textos con significado parecido quedan "cerca" en ese espacio, aunque no compartan palabras. Por eso la búsqueda encuentra el trozo correcto sin necesitar la palabra exacta. El LLM no lee el manual completo: solo recibe los 4 trozos más cercanos, lo que lo hace **más rápido, barato y preciso**. Esta técnica se llama **RAG** (*Retrieval-Augmented Generation*).
 
----
+## Qué usamos
 
-## Requisitos
+| Pieza | Para qué sirve | Detalle |
+|---|---|---|
+| **n8n** `2.42.7` | Orquesta los flujos (ingesta y chat) sin escribir código | Interfaz web en `http://localhost:5678` |
+| **PostgreSQL 18 + pgvector** `0.8.x` | Guarda los vectores y busca por cercanía | Imagen `pgvector/pgvector:pg18` |
+| **OpenAI `text-embedding-3-small`** | Convierte texto en vectores (1536 dimensiones) | Requiere API key |
+| **OpenAI `gpt-4o-mini`** | El modelo que redacta la respuesta | Requiere API key |
 
-- Docker y Docker Compose (`docker compose version`).
-- Una **API key de OpenAI** con crédito.
-- ~**1 GB de RAM libre** (n8n usa unos 550 MB, la base de datos unos 100 MB).
+Dos contenedores (`db` y `n8n`). Los modelos de OpenAI son llamadas externas.
 
-## Inicio rápido
+## Qué se automatiza al arrancar
 
-```bash
-# 1. Clonar
-git clone https://github.com/CHPaez/rag-demo-n8n.git
-cd rag-demo-n8n
+Un script (`scripts/bootstrap.sh`) corre antes de n8n y, con los valores del `.env`:
 
-# 2. Crear la configuración y generar claves
-cp .env.example .env
-sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 12)/" .env
-sed -i "s/^N8N_ENCRYPTION_KEY=.*/N8N_ENCRYPTION_KEY=$(openssl rand -hex 24)/" .env
+| Qué | Cuándo |
+|---|---|
+| Crea la **cuenta de administrador** (`OWNER_EMAIL` / `OWNER_PASSWORD`) | Primer arranque |
+| Crea las **credenciales** de Postgres y OpenAI, con IDs fijos que los flujos ya referencian | **En cada arranque** (así un cambio de API key se aplica) |
+| Importa los **dos flujos** | Solo la primera vez, para no pisar cambios hechos en la interfaz |
 
-# 3. Levantar
-docker compose up -d
+Si preferís crear tu propia cuenta en la interfaz, dejá `OWNER_PASSWORD` vacío en `.env`.
 
-# 4. Importar los dos flujos
-docker compose exec n8n n8n import:workflow --input=/workflows/01-ingesta.json
-docker compose exec n8n n8n import:workflow --input=/workflows/02-chat-agente.json
-```
-
-Abrí **http://localhost:5678**, creá el usuario administrador y seguí con las credenciales.
-
-### Credenciales (se crean una sola vez en n8n)
-
-En **Credentials → Create**:
-
-1. **Postgres**
-   - Host: `db`
-   - Database / User: los de tu `.env` (por defecto `rag`)
-   - Password: `POSTGRES_PASSWORD` de tu `.env`
-   - Port: `5432`
-   - SSL: `disable`
-2. **OpenAI API**: pegá tu API key.
-
-Después abrí cada flujo y, en los nodos marcados en rojo (PGVector, Embeddings, Modelo de chat), **elegí la credencial** que acabás de crear.
-
-## Usar la demo
-
-1. **Cargar el manual:** abrí el flujo `01 - Ingesta de manuales` y presioná **Execute workflow**. Lee todo lo que haya en la carpeta `manuales/` y lo guarda vectorizado en la tabla `manuales`.
-2. **Preguntar:** abrí el flujo `02 - Chat con el agente`, presioná **Open chat** y probá:
-   - *¿Cómo es la trama ORU^R01 que envía el monitor?*
-   - *¿Qué significa el código de error E-214?*
-   - *¿Qué puerto usa el HIS por defecto?*
-   - *El monitor reintenta una y otra vez, ¿qué reviso?*
-
-El repo incluye `manuales/manual-ejemplo-monitor-m100.md`, un manual **ficticio** de un monitor con interfaz HL7, para probar sin datos reales.
-
-### Usar tus propios manuales
-
-Copiá los archivos (`.pdf`, `.md`, `.txt`) a la carpeta `manuales/` y volvé a ejecutar el flujo de ingesta. **Ojo:** ejecutarlo dos veces sobre el mismo archivo **duplica** los vectores. Para empezar de cero:
-
-```bash
-docker compose exec db psql -U rag -d rag -c "TRUNCATE manuales;"
-```
+**Cambiar la API key de OpenAI:** editá `OPENAI_API_KEY` en `.env` y ejecutá `docker compose up -d --force-recreate n8n`.
 
 ---
 
@@ -128,13 +120,13 @@ services:
 
 Y en el proxy: reenviá a `127.0.0.1:5678`, activá **WebSockets** (`Upgrade`/`Connection`) y desactivá el buffering para que el chat responda en streaming.
 
-> **Seguridad:** la primera persona que abre n8n crea la cuenta de administrador. Si la instancia queda en internet, protegé la URL con usuario y contraseña en el proxy (o creá tu cuenta de inmediato) antes de compartirla.
+> **Seguridad:** al ser una demo, el `.env` guarda la contraseña del administrador en texto plano. Si la instancia queda en internet, protegé la URL con usuario y contraseña en el proxy y usá una contraseña propia, no la generada.
 
 ## Comandos útiles
 
 ```bash
 docker compose ps                  # estado
-docker compose logs -f n8n         # logs
+docker compose logs -f n8n         # logs (incluye mensajes [bootstrap])
 docker compose down                # apagar (conserva los datos)
 docker compose down -v             # apagar y BORRAR todo (flujos, credenciales, vectores)
 ```
@@ -143,22 +135,23 @@ docker compose down -v             # apagar y BORRAR todo (flujos, credenciales,
 
 ## Estado de validación
 
-Verificado al construir el repo:
+Probado en una **copia limpia del repo, sin nada previo**, con `./setup.sh` y `docker compose up -d`:
 
-- `docker compose up -d` levanta ambos servicios y la base queda `healthy`.
-- La extensión `vector` (pgvector 0.8.x) queda instalada automáticamente.
-- n8n responde en `/healthz`.
-- Los dos flujos se **importan sin errores** y n8n conserva tipos de nodo, versiones, parámetros y conexiones.
+- El administrador se crea solo y **el login funciona** con las credenciales generadas.
+- Se crean las dos credenciales y los dos flujos, ya enlazados (sin nodos en rojo).
+- Con una API key inválida, la ingesta llega hasta OpenAI y este responde `401`: la cadena completa está cableada.
+- Con un servidor de embeddings **simulado y compatible con OpenAI**, la ingesta termina en `success`: se guardan **4 trozos de 1536 dimensiones** en pgvector, con su texto y metadatos, y la búsqueda por cercanía devuelve el orden esperado (distancia 0 contra sí mismo).
 
-**No verificado:** una ejecución completa con credenciales reales (se necesita una API key de OpenAI). Si al correrlo algún nodo muestra un parámetro distinto, ajustalo en la interfaz: los flujos están hechos para n8n `2.42.7`.
+**No verificado:** una ejecución con una API key real de OpenAI, ni las **respuestas del agente de chat** (el nodo del modelo no se ejecutó). Si al probarlo un parámetro de un nodo difiere, ajustalo en la interfaz: los flujos están hechos para n8n `2.42.7`.
 
 ## Notas importantes
 
-- **Confidencialidad:** con esta configuración el texto de los manuales **se envía a OpenAI** para vectorizarlo y para responder. Si el manual es propietario o confidencial, usá antes un modelo local (ver abajo).
+- **Confidencialidad:** el texto de los manuales **se envía a OpenAI** para vectorizarlo y para responder. Si el manual es propietario o confidencial, usá antes un modelo local (ver abajo).
 - **El mismo modelo de embeddings** tiene que usarse en la ingesta y en el chat. Si cambiás uno, hay que volver a vectorizar todo (las dimensiones no coinciden).
-- Las contraseñas y la `N8N_ENCRYPTION_KEY` viven en `.env`, que **no se sube a git**. Guardá la clave: sin ella no se pueden descifrar las credenciales guardadas en n8n.
+- Los secretos viven en `.env`, que **no se sube a git**. Guardá `N8N_ENCRYPTION_KEY`: sin ella no se pueden descifrar las credenciales guardadas en n8n.
 - Cada servicio tiene un tope de memoria en `docker-compose.yml` (`db` 300 MB, `n8n` 700 MB) para que un pico no tumbe el servidor.
 - Los flujos están en `workflows/` como JSON: se pueden versionar y revisar como cualquier otro archivo.
+- **Si la ingesta por consola falla con "Task Broker's port 5679 is already in use"**, es el puerto interno de n8n: por eso el comando incluye `-e N8N_RUNNERS_BROKER_PORT=5690`.
 
 ## Alternativas (si se quiere ir más lejos)
 
@@ -172,8 +165,10 @@ Verificado al construir el repo:
 
 ```
 .
+├── setup.sh                    # genera .env con claves aleatorias
 ├── docker-compose.yml          # n8n + PostgreSQL con pgvector
 ├── .env.example                # plantilla de configuración
+├── scripts/bootstrap.sh        # crea admin, credenciales e importa flujos al arrancar
 ├── db/init.sql                 # activa la extensión vector
 ├── manuales/                   # documentos a vectorizar
 │   └── manual-ejemplo-monitor-m100.md
