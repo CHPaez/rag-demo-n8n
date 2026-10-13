@@ -112,6 +112,24 @@ ssh -L 5678:127.0.0.1:5678 usuario@IP_DEL_SERVIDOR
 
 Y abrí `http://localhost:5678` en tu navegador.
 
+## Publicarlo en un dominio (opcional)
+
+Para probarlo desde un navegador sin túnel, se puede poner un proxy inverso (nginx, Caddy, etc.) con HTTPS delante de n8n. Creá un archivo `docker-compose.override.yml` junto al `docker-compose.yml` (Docker Compose lo carga solo; el repo ya lo ignora):
+
+```yaml
+services:
+  n8n:
+    environment:
+      N8N_HOST: tu-dominio.com
+      N8N_PROTOCOL: https
+      WEBHOOK_URL: https://tu-dominio.com/
+      N8N_PROXY_HOPS: "1"
+```
+
+Y en el proxy: reenviá a `127.0.0.1:5678`, activá **WebSockets** (`Upgrade`/`Connection`) y desactivá el buffering para que el chat responda en streaming.
+
+> **Seguridad:** la primera persona que abre n8n crea la cuenta de administrador. Si la instancia queda en internet, protegé la URL con usuario y contraseña en el proxy (o creá tu cuenta de inmediato) antes de compartirla.
+
 ## Comandos útiles
 
 ```bash
