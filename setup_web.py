@@ -26,6 +26,8 @@ ENV_FILE = ROOT / ".env"
 PORT = int(os.environ.get("WIZARD_PORT", "8099"))
 OPENAI_BASE = os.environ.get("RAG_OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 EMBED_MODEL = "text-embedding-3-small"
+GEMINI_BASE = os.environ.get("RAG_GEMINI_BASE_URL", "https://generativelanguage.googleapis.com").rstrip("/")
+GEMINI_EMBED = os.environ.get("GEMINI_EMBED_MODEL", "gemini-embedding-001")
 TOKEN = secrets.token_urlsafe(16)
 SEP = "\x1f"
 IDLE_MINUTES = float(os.environ.get("WIZARD_IDLE_MINUTES", "0"))  # 0 = never stop
@@ -33,11 +35,12 @@ LAST_ACTIVITY = [time.time()]
 
 KEYS = ["POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB", "N8N_ENCRYPTION_KEY", "N8N_PORT",
         "GENERIC_TIMEZONE", "OWNER_EMAIL", "OWNER_PASSWORD", "OWNER_FIRST_NAME", "OWNER_LAST_NAME",
-        "OPENAI_API_KEY"]
+        "OPENAI_API_KEY", "AI_PROVIDER", "GEMINI_API_KEY"]
 DEFAULTS = {"POSTGRES_USER": "rag", "POSTGRES_PASSWORD": "", "POSTGRES_DB": "rag",
             "N8N_ENCRYPTION_KEY": "", "N8N_PORT": "5678", "GENERIC_TIMEZONE": "America/Bogota",
             "OWNER_EMAIL": "admin@example.com", "OWNER_PASSWORD": "", "OWNER_FIRST_NAME": "Demo",
-            "OWNER_LAST_NAME": "RAG", "OPENAI_API_KEY": ""}
+            "OWNER_LAST_NAME": "RAG", "OPENAI_API_KEY": "", "AI_PROVIDER": "openai",
+            "GEMINI_API_KEY": ""}
 BAD_CHARS = re.compile(r"[\s$#\\\"'`]")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -79,6 +82,14 @@ def hint(v):
     if not v:
         return ""
     return "********" if len(v) <= 8 else f"{v[:3]}...{v[-4:]}"
+
+
+def provider_of(cfg):
+    return cfg["AI_PROVIDER"] if cfg["AI_PROVIDER"] in ("openai", "gemini") else "openai"
+
+
+def active_key(cfg):
+    return cfg["GEMINI_API_KEY"] if provider_of(cfg) == "gemini" else cfg["OPENAI_API_KEY"]
 
 
 def sh(cmd, input_text=None, timeout=120):
@@ -123,7 +134,9 @@ def get_state():
         "port": port, "timezone": cfg["GENERIC_TIMEZONE"], "owner_email": cfg["OWNER_EMAIL"],
         "owner_first_name": cfg["OWNER_FIRST_NAME"], "owner_last_name": cfg["OWNER_LAST_NAME"],
         "has_owner_password": cfg["OWNER_PASSWORD"] != "", "owner_password_hint": hint(cfg["OWNER_PASSWORD"]),
+        "provider": provider_of(cfg),
         "has_key": cfg["OPENAI_API_KEY"] != "", "key_hint": hint(cfg["OPENAI_API_KEY"]),
+        "has_gemini_key": cfg["GEMINI_API_KEY"] != "", "gemini_key_hint": hint(cfg["GEMINI_API_KEY"]),
         "db_password_hint": hint(cfg["POSTGRES_PASSWORD"]), "enc_key_hint": hint(cfg["N8N_ENCRYPTION_KEY"]),
         "db_name": cfg["POSTGRES_DB"], "db_user": cfg["POSTGRES_USER"],
     }
@@ -139,6 +152,20 @@ def save_cfg(body):
             errors.append("La API key no puede tener espacios, comillas, $, # ni barras invertidas.")
         else:
             cfg["OPENAI_API_KEY"] = key
+
+    gkey = body.get("gemini_api_key")
+    if gkey is not None:
+        if BAD_CHARS.search(gkey):
+            errors.append("La API key de Gemini no puede tener espacios, comillas, $, # ni barras invertidas.")
+        else:
+            cfg["GEMINI_API_KEY"] = gkey
+
+    prov = body.get("ai_provider")
+    if prov is not None:
+        if prov not in ("openai", "gemini"):
+            errors.append("Proveedor de IA no válido.")
+        else:
+            cfg["AI_PROVIDER"] = prov
 
     email = body.get("owner_email", cfg["OWNER_EMAIL"]).strip()
     if not EMAIL_RE.match(email):
@@ -187,19 +214,26 @@ def save_cfg(body):
 
 def validate_key(body):
     cfg, _ = load_cfg()
-    key = body.get("openai_api_key") or cfg["OPENAI_API_KEY"]
+    provider = body.get("ai_provider") or provider_of(cfg)
+    stored = cfg["GEMINI_API_KEY"] if provider == "gemini" else cfg["OPENAI_API_KEY"]
+    key = body.get("api_key") or stored
     if not key:
         return {"ok": False, "detail": "No hay ninguna API key para validar."}
-    req = urllib.request.Request(f"{OPENAI_BASE}/models", headers={"Authorization": f"Bearer {key}"})
+    if provider == "gemini":
+        req = urllib.request.Request(f"{GEMINI_BASE}/v1beta/models?pageSize=1", headers={"x-goog-api-key": key})
+        name = "Google"
+    else:
+        req = urllib.request.Request(f"{OPENAI_BASE}/models", headers={"Authorization": f"Bearer {key}"})
+        name = "OpenAI"
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
-            return {"ok": r.status == 200, "detail": "La key es válida (OpenAI respondió 200)."}
+            return {"ok": r.status == 200, "detail": f"La key es válida ({name} respondió 200)."}
     except urllib.error.HTTPError as e:
-        if e.code == 401:
-            return {"ok": False, "detail": "OpenAI rechazó la key (401). Revisá que esté completa."}
-        return {"ok": False, "detail": f"OpenAI respondió HTTP {e.code}."}
+        if e.code in (400, 401, 403):
+            return {"ok": False, "detail": f"{name} rechazó la key (HTTP {e.code}). Revisá que esté completa."}
+        return {"ok": False, "detail": f"{name} respondió HTTP {e.code}."}
     except Exception as e:  # network errors
-        return {"ok": False, "detail": f"No se pudo contactar a OpenAI: {e}"}
+        return {"ok": False, "detail": f"No se pudo contactar a {name}: {e}"}
 
 
 def run_job(name, steps):
@@ -284,7 +318,11 @@ def start_deploy():
 
 
 def start_ingest():
-    steps = [("n8n execute (ingesta)", ["docker", "compose", "exec", "-T", "-e", "N8N_RUNNERS_BROKER_PORT=5690",
+    cfg, _ = load_cfg()
+    steps = [("reemplazar vectores anteriores",
+              ["docker", "compose", "exec", "-T", "db", "psql", "-U", cfg["POSTGRES_USER"], "-d", cfg["POSTGRES_DB"],
+               "-c", "DROP TABLE IF EXISTS manuales;"]),
+             ("n8n execute (ingesta)", ["docker", "compose", "exec", "-T", "-e", "N8N_RUNNERS_BROKER_PORT=5690",
                                           "n8n", "n8n", "execute", "--id=ragIngesta01"])]
     if not run_job("ingest", steps):
         return {"ok": False, "error": "Ya hay una tarea en curso."}
@@ -328,13 +366,22 @@ def run_checks():
 
     rc, out = sh(["docker", "compose", "exec", "-T", "-e", "N8N_RUNNERS_BROKER_PORT=5690", "n8n", "n8n",
                   "export:credentials", "--all"])
+    provider = provider_of(cfg)
     names = []
     try:
         names = [c["name"] for c in json.loads(out[out.index("["):out.rindex("]") + 1])]
     except Exception:
         pass
-    add("Credenciales Postgres y OpenAI creadas",
-        "Postgres RAG (auto)" in names and "OpenAI RAG (auto)" in names, ", ".join(names) or "ninguna")
+    ai_name = "Gemini RAG (auto)" if provider == "gemini" else "OpenAI RAG (auto)"
+    add("Credenciales de Postgres y del proveedor creadas", "Postgres RAG (auto)" in names and ai_name in names,
+        ", ".join(names) or "ninguna")
+    add(f"API key de {'Gemini' if provider == 'gemini' else 'OpenAI'} configurada", active_key(cfg) != "",
+        "" if active_key(cfg) else "falta: cargala en el paso 1")
+    rc, out = sh(["docker", "compose", "exec", "-T", "-e", "N8N_RUNNERS_BROKER_PORT=5690", "n8n", "n8n",
+                  "export:workflow", "--id=ragIngesta01"])
+    marker = "embeddingsGoogleGemini" if provider == "gemini" else "embeddingsOpenAi"
+    add("Los flujos usan el proveedor elegido", rc == 0 and marker in out,
+        "" if marker in out else "desplegá de nuevo para aplicar el cambio de proveedor")
 
     rc, out = psql("SELECT extversion FROM pg_extension WHERE extname='vector';")
     add("pgvector instalado", rc == 0 and out.strip() != "", out.strip() and f"versión {out.strip()}")
@@ -349,21 +396,28 @@ def search(body):
     if not q:
         return {"ok": False, "error": "Escribí una pregunta."}
     cfg, _ = load_cfg()
-    if not cfg["OPENAI_API_KEY"]:
-        return {"ok": False, "error": "Falta la API key de OpenAI."}
+    provider, key = provider_of(cfg), active_key(cfg)
+    if not key:
+        return {"ok": False, "error": "Falta la API key del proveedor de IA."}
     try:
-        _, data = http_json(f"{OPENAI_BASE}/embeddings", {"model": EMBED_MODEL, "input": q},
-                            {"Authorization": f"Bearer {cfg['OPENAI_API_KEY']}"}, timeout=30)
-        vec = "[" + ",".join(repr(float(x)) for x in data["data"][0]["embedding"]) + "]"
+        if provider == "gemini":
+            _, data = http_json(f"{GEMINI_BASE}/v1beta/models/{GEMINI_EMBED}:embedContent",
+                                {"content": {"parts": [{"text": q}]}}, {"x-goog-api-key": key}, timeout=30)
+            values = data["embedding"]["values"]
+        else:
+            _, data = http_json(f"{OPENAI_BASE}/embeddings", {"model": EMBED_MODEL, "input": q},
+                                {"Authorization": f"Bearer {key}"}, timeout=30)
+            values = data["data"][0]["embedding"]
+        vec = "[" + ",".join(repr(float(x)) for x in values) + "]"
     except urllib.error.HTTPError as e:
-        return {"ok": False, "error": f"OpenAI respondió HTTP {e.code} al calcular el embedding."}
+        return {"ok": False, "error": f"El proveedor respondió HTTP {e.code} al calcular el embedding."}
     except Exception as e:
         return {"ok": False, "error": f"No se pudo calcular el embedding: {e}"}
     sql = (f"SELECT round((embedding <=> '{vec}'::vector)::numeric, 4), replace(text, E'\\n', ' ') "
            f"FROM manuales ORDER BY embedding <=> '{vec}'::vector LIMIT 4;")
     rc, out = psql(sql)
     if rc != 0:
-        return {"ok": False, "error": "La búsqueda falló. ¿Ya vectorizaste el manual?"}
+        return {"ok": False, "error": "La búsqueda falló. ¿Ya vectorizaste el manual? Si cambiaste de proveedor, volvé a vectorizar."}
     rows = []
     for line in out.strip().splitlines():
         if SEP in line:
@@ -454,6 +508,7 @@ label{display:block;font-weight:600;font-size:13px;margin:12px 0 4px}
 .hint{color:var(--mut);font-size:12.5px;margin-top:4px}
 input[type=text],input[type=password],input[type=email],input[type=number]{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
 input:focus,button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.opt{display:flex;gap:6px;align-items:center;font-weight:400;margin:6px 16px 0 0;font-size:14px}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .inline{display:flex;gap:8px}.inline input{flex:1}
 @media(max-width:560px){.row{grid-template-columns:1fr}}
@@ -481,7 +536,14 @@ a{color:var(--acc)}
     <h2><span class="num">1</span> Configuración</h2>
     <div id="dockerWarn" class="msg bad" hidden>Docker Compose no está disponible en esta máquina. Instalalo antes de desplegar.</div>
 
-    <label for="key">API key de OpenAI</label>
+    <label>Proveedor de IA</label>
+    <div class="inline" role="radiogroup" aria-label="Proveedor de IA">
+      <label class="opt"><input type="radio" name="prov" value="gemini"> Google Gemini (gratis)</label>
+      <label class="opt"><input type="radio" name="prov" value="openai"> OpenAI (de pago)</label>
+    </div>
+    <div class="hint" id="provNote"></div>
+
+    <label for="key" id="keyLabel">API key</label>
     <div class="inline">
       <input id="key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-...">
       <button id="showKey" type="button" aria-pressed="false">Ver</button>
@@ -550,17 +612,31 @@ async function load() {
   S = await api('api/state');
   $('email').value = S.owner_email; $('fn').value = S.owner_first_name;
   $('ln').value = S.owner_last_name; $('port').value = S.port; $('tz').value = S.timezone;
-  $('keyHint').textContent = S.has_key ? 'Guardada: ' + S.key_hint + ' (dejá el campo vacío para conservarla)' : 'Todavía no hay una API key guardada.';
+  document.querySelector('input[name=prov][value=' + S.provider + ']').checked = true; updateProvider();
   $('pwHint').textContent = S.has_owner_password ? 'Actual: ' + S.owner_password_hint + ' (vacío = sin cambios)' : 'Vacío: no se crea ni modifica ningún administrador automáticamente.';
   $('dbpw').textContent = S.db_password_hint; $('enc').textContent = S.enc_key_hint;
   $('lockHint').textContent = S.deployed ? 'Bloqueadas: ya hay un despliegue y cambiarlas rompería los datos y las credenciales guardadas.' : 'Se generan solas y quedan bloqueadas tras el primer despliegue.';
   $('dockerWarn').hidden = S.docker;
   $('openN8n').href = S.n8n_url; $('openChat').href = S.chat_url;
 }
+const provider = () => document.querySelector('input[name=prov]:checked').value;
+function updateProvider() {
+  const g = provider() === 'gemini';
+  $('keyLabel').textContent = g ? 'API key de Google Gemini' : 'API key de OpenAI';
+  $('key').placeholder = g ? 'AIza...' : 'sk-...';
+  const has = g ? S.has_gemini_key : S.has_key, hintTxt = g ? S.gemini_key_hint : S.key_hint;
+  $('keyHint').textContent = has ? 'Guardada: ' + hintTxt + ' (dejá el campo vacío para conservarla)' : 'Todavía no hay una API key guardada para este proveedor.';
+  $('provNote').textContent = g
+    ? 'Gratis: creá la key en aistudio.google.com/apikey (sin tarjeta). Ojo: en el nivel gratuito Google puede usar lo que enviás para mejorar sus productos, así que usalo solo con manuales no confidenciales. Los límites diarios son bajos.'
+    : 'De pago: cobra por uso. Es la opción para manuales confidenciales si ya tenés cuenta.';
+  say($('keyMsg'), '', '');
+}
+document.querySelectorAll('input[name=prov]').forEach(r => r.addEventListener('change', updateProvider));
 function payload() {
   const p = { owner_email: $('email').value, owner_first_name: $('fn').value, owner_last_name: $('ln').value,
               port: $('port').value, timezone: $('tz').value };
-  if ($('key').value !== '') p.openai_api_key = $('key').value;
+  p.ai_provider = provider();
+  if ($('key').value !== '') p[provider() === 'gemini' ? 'gemini_api_key' : 'openai_api_key'] = $('key').value;
   if ($('pw').value !== '') p.owner_password = $('pw').value;
   return p;
 }
@@ -575,7 +651,7 @@ $('genPw').onclick = () => save({ owner_password_generate: true }).catch(e => sa
 $('showKey').onclick = () => { const on = $('key').type === 'password'; $('key').type = on ? 'text' : 'password'; $('showKey').textContent = on ? 'Ocultar' : 'Ver'; $('showKey').setAttribute('aria-pressed', on); };
 $('valKey').onclick = async () => {
   say($('keyMsg'), 'Validando...', '');
-  try { const r = await api('api/validate-key', { openai_api_key: $('key').value }); say($('keyMsg'), r.detail, r.ok ? 'ok' : 'bad'); }
+  try { const r = await api('api/validate-key', { ai_provider: provider(), api_key: $('key').value }); say($('keyMsg'), r.detail, r.ok ? 'ok' : 'bad'); }
   catch (e) { say($('keyMsg'), String(e), 'bad'); }
 };
 

@@ -2,7 +2,7 @@
 # Configuration screen for the RAG demo: review and edit every setting, then deploy.
 #
 #   ./setup.sh                 interactive screen (default when run in a terminal)
-#   ./setup.sh sk-...          no screen: create .env with this OpenAI key if it does not exist
+#   ./setup.sh [openai|gemini] KEY   no screen: create .env with this key if it does not exist
 #   ./setup.sh --interactive   force the screen even if stdin is not a terminal (testing)
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -23,6 +23,8 @@ OWNER_PASSWORD=
 OWNER_FIRST_NAME=Demo
 OWNER_LAST_NAME=RAG
 OPENAI_API_KEY=
+GEMINI_API_KEY=
+AI_PROVIDER=openai
 
 EXISTING=0
 
@@ -35,7 +37,7 @@ if [ -f "$ENV_FILE" ]; then
     v=${line#*=}
     case "$k" in
       POSTGRES_USER|POSTGRES_PASSWORD|POSTGRES_DB|N8N_ENCRYPTION_KEY|N8N_PORT|GENERIC_TIMEZONE|\
-      OWNER_EMAIL|OWNER_PASSWORD|OWNER_FIRST_NAME|OWNER_LAST_NAME|OPENAI_API_KEY)
+      OWNER_EMAIL|OWNER_PASSWORD|OWNER_FIRST_NAME|OWNER_LAST_NAME|OPENAI_API_KEY|GEMINI_API_KEY|AI_PROVIDER)
         printf -v "$k" '%s' "$v"
         ;;
     esac
@@ -59,6 +61,11 @@ elif [ -t 0 ] && [ -z "${1:-}" ]; then
   INTERACTIVE=1
 fi
 
+case "$AI_PROVIDER" in openai|gemini) ;; *) AI_PROVIDER=openai ;; esac
+cur_key() { if [ "$AI_PROVIDER" = gemini ]; then printf '%s' "$GEMINI_API_KEY"; else printf '%s' "$OPENAI_API_KEY"; fi; }
+set_key() { if [ "$AI_PROVIDER" = gemini ]; then GEMINI_API_KEY="$1"; else OPENAI_API_KEY="$1"; fi; }
+pname() { if [ "$AI_PROVIDER" = gemini ]; then printf 'Gemini'; else printf 'OpenAI'; fi; }
+
 write_env() {
   local tmp="${ENV_FILE}.tmp"
   {
@@ -73,7 +80,9 @@ write_env() {
     echo "OWNER_PASSWORD=$OWNER_PASSWORD"
     echo "OWNER_FIRST_NAME=$OWNER_FIRST_NAME"
     echo "OWNER_LAST_NAME=$OWNER_LAST_NAME"
+    echo "AI_PROVIDER=$AI_PROVIDER"
     echo "OPENAI_API_KEY=$OPENAI_API_KEY"
+    echo "GEMINI_API_KEY=$GEMINI_API_KEY"
   } > "$tmp"
   chmod 600 "$tmp"
   mv "$tmp" "$ENV_FILE"
@@ -84,13 +93,19 @@ if [ "$INTERACTIVE" = 0 ]; then
     echo ".env already exists, leaving it untouched. Run ./setup.sh in a terminal to edit it."
     exit 0
   fi
-  OPENAI_API_KEY="${1:-}"
+  if [ "${1:-}" = gemini ] || [ "${1:-}" = openai ]; then
+    AI_PROVIDER="$1"
+    set_key "${2:-}"
+  else
+    set_key "${1:-}"
+  fi
   write_env
   echo ".env created."
   echo "  n8n URL : http://localhost:$N8N_PORT"
   echo "  user    : $OWNER_EMAIL"
   echo "  password: $OWNER_PASSWORD"
-  [ -n "$OPENAI_API_KEY" ] || echo "  WARNING : OPENAI_API_KEY is empty. Run ./setup.sh again to set it."
+  echo "  provider: $AI_PROVIDER"
+  [ -n "$(cur_key)" ] || echo "  WARNING : the $(pname) API key is empty. Run ./setup.sh again to set it."
   echo
   echo "Next: docker compose up -d"
   exit 0
@@ -117,7 +132,12 @@ screen() {
   echo "+----------------------------------------------------------------+"
   echo
   echo "  Editable"
-  printf '   1) OpenAI API key        %s\n' "$(mask "$OPENAI_API_KEY")"
+  if [ "$AI_PROVIDER" = gemini ]; then
+    printf '   9) AI provider           gemini (free tier; models gemini-2.5-flash + gemini-embedding-001)\n'
+  else
+    printf '   9) AI provider           openai (paid; models gpt-4o-mini + text-embedding-3-small)\n'
+  fi
+  printf '   1) %s API key         %s\n' "$(pname)" "$(mask "$(cur_key)")"
   printf '   2) Admin email           %s\n' "$OWNER_EMAIL"
   if [ -z "$OWNER_PASSWORD" ]; then
     printf '   3) Admin password        (empty: no admin is created or changed automatically)\n'
@@ -136,11 +156,12 @@ screen() {
   printf '   7) Database password     %s\n' "$(mask "$POSTGRES_PASSWORD")"
   printf '   8) n8n encryption key    %s\n' "$(mask "$N8N_ENCRYPTION_KEY")"
   echo
-  echo "  Fixed: database '$POSTGRES_DB', user '$POSTGRES_USER', models text-embedding-3-small + gpt-4o-mini"
+  echo "  Fixed: database '$POSTGRES_DB', user '$POSTGRES_USER'"
   echo
-  [ -z "$OPENAI_API_KEY" ] && echo "  ! OpenAI API key is empty: ingestion and chat will not work."
+  if [ -z "$(cur_key)" ]; then echo "  ! $(pname) API key is empty: ingestion and chat will not work."; fi
+  if [ "$AI_PROVIDER" = gemini ]; then echo "  ! Gemini free tier: Google may use what you send to improve its products. Non-confidential manuals only."; fi
   echo
-  echo "  [1-8] edit   [v] show/hide secrets   [s] save   [d] save and deploy   [q] quit"
+  echo "  [1-9] edit   [v] show/hide secrets   [s] save   [d] save and deploy   [q] quit"
   echo
 }
 
@@ -164,15 +185,23 @@ note() { echo "  -> $1"; sleep 1.2; }
 edit_field() {
   case "$1" in
     1)
-      ask_secret "OpenAI API key (Enter keeps current, '-' clears):"
+      ask_secret "$(pname) API key (Enter keeps current, '-' clears):"
       case "$REPLY" in
         '') return ;;
-        '-') OPENAI_API_KEY="" ;;
+        '-') set_key "" ;;
         *)
           if bad_chars "$REPLY"; then note "Rejected: no spaces, quotes, \$, # or backslashes."; return; fi
-          case "$REPLY" in sk-*) ;; *) confirm "It does not start with 'sk-'. Use it anyway?" || return ;; esac
-          OPENAI_API_KEY="$REPLY" ;;
+          set_key "$REPLY" ;;
       esac ;;
+    9)
+      if [ "$AI_PROVIDER" = gemini ]; then
+        AI_PROVIDER=openai
+      else
+        echo "  Gemini has a free tier (key at https://aistudio.google.com/apikey), but Google may use"
+        echo "  what you send to improve its products. Use it only with non-confidential manuals."
+        echo "  After switching provider you must re-vectorize the manual."
+        if confirm "Switch to Gemini?"; then AI_PROVIDER=gemini; fi
+      fi ;;
     2)
       ask "Admin email [$OWNER_EMAIL]:"
       [ -z "$REPLY" ] && return
@@ -252,7 +281,7 @@ while true; do
   screen
   read -r -p "  > " CHOICE || CHOICE="q"
   case "$CHOICE" in
-    [1-8]) edit_field "$CHOICE" ;;
+    [1-9]) edit_field "$CHOICE" ;;
     v|V) if [ "$SHOW" = 1 ]; then SHOW=0; else SHOW=1; fi ;;
     s|S) write_env; note "Saved to $ENV_FILE (permissions 600)." ;;
     d|D)

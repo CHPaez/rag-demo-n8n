@@ -1,11 +1,16 @@
 #!/bin/sh
 # Runs before n8n starts: creates credentials and imports workflows from .env values.
-# Idempotent: credentials are refreshed on every start (so a new OPENAI_API_KEY applies);
-# workflows are imported only once, so edits made in the UI are never overwritten.
+# Idempotent: credentials are refreshed on every start (so a new API key applies);
+# workflows are imported on the first start and again only when AI_PROVIDER changes,
+# so edits made in the UI are not overwritten on a normal restart.
 set -eu
 
 MARKER=/home/node/.n8n/.rag-bootstrap-done
 CREDS=/tmp/rag-credentials.json
+WF_DIR=/tmp/rag-workflows
+PROVIDER="${AI_PROVIDER:-openai}"
+case "$PROVIDER" in openai|gemini) ;; *) echo "[bootstrap] Unknown AI_PROVIDER '$PROVIDER', using openai."; PROVIDER=openai ;; esac
+export AI_PROVIDER="$PROVIDER"
 
 # --- 1. Owner account (optional): needs OWNER_EMAIL and OWNER_PASSWORD -----------------
 if [ -n "${OWNER_EMAIL:-}" ] && [ -n "${OWNER_PASSWORD:-}" ]; then
@@ -19,7 +24,7 @@ else
   echo "[bootstrap] OWNER_EMAIL/OWNER_PASSWORD not set: create the owner in the web UI."
 fi
 
-# --- 2. Credentials (Postgres + OpenAI) -------------------------------------------------
+# --- 2. Credentials (Postgres + OpenAI + Gemini) ----------------------------------------
 node -e '
 const e = process.env;
 const creds = [
@@ -29,6 +34,8 @@ const creds = [
             maxConnections: 100 } },
   { id: "ragOpenAiCred", name: "OpenAI RAG (auto)", type: "openAiApi",
     data: { apiKey: e.OPENAI_API_KEY || "", url: "https://api.openai.com/v1", header: false } },
+  { id: "ragGeminiCred", name: "Gemini RAG (auto)", type: "googlePalmApi",
+    data: { host: "https://generativelanguage.googleapis.com", apiKey: e.GEMINI_API_KEY || "" } },
 ];
 require("fs").writeFileSync(process.argv[1], JSON.stringify(creds));
 ' "$CREDS"
@@ -40,22 +47,29 @@ else
 fi
 rm -f "$CREDS"
 
-if [ -z "${OPENAI_API_KEY:-}" ]; then
+if [ "$PROVIDER" = gemini ] && [ -z "${GEMINI_API_KEY:-}" ]; then
+  echo "[bootstrap] WARNING: GEMINI_API_KEY is empty. Set it in .env and run: docker compose up -d --force-recreate n8n"
+elif [ "$PROVIDER" = openai ] && [ -z "${OPENAI_API_KEY:-}" ]; then
   echo "[bootstrap] WARNING: OPENAI_API_KEY is empty. Set it in .env and run: docker compose up -d --force-recreate n8n"
 fi
 
-# --- 3. Workflows (first start only) ----------------------------------------------------
-if [ ! -f "$MARKER" ]; then
+# --- 3. Workflows (first start, or when the provider changed) ---------------------------
+if [ ! -f "$MARKER" ] || [ "$(cat "$MARKER" 2>/dev/null)" != "$PROVIDER" ]; then
+  rm -rf "$WF_DIR"
   ok=1
-  for f in /workflows/*.json; do
-    n8n import:workflow --input="$f" >/dev/null 2>&1 || ok=0
-  done
+  node /scripts/adapt-workflows.js /workflows "$WF_DIR" >/dev/null || ok=0
   if [ "$ok" = 1 ]; then
-    touch "$MARKER"
-    echo "[bootstrap] Workflows imported."
+    for f in "$WF_DIR"/*.json; do
+      n8n import:workflow --input="$f" >/dev/null 2>&1 || ok=0
+    done
+  fi
+  if [ "$ok" = 1 ]; then
+    printf '%s' "$PROVIDER" > "$MARKER"
+    echo "[bootstrap] Workflows imported for provider: $PROVIDER."
   else
     echo "[bootstrap] WARNING: some workflows failed to import; retry with a restart."
   fi
+  rm -rf "$WF_DIR"
 fi
 
 exec /docker-entrypoint.sh "$@"

@@ -4,6 +4,8 @@ Demo para **consultar manuales técnicos con lenguaje natural**. Se carga un man
 
 Se instala con **3 comandos** en cualquier equipo con Docker. Usuario, credenciales y flujos se crean solos.
 
+Funciona con **Google Gemini (nivel gratuito, sin tarjeta)** o con **OpenAI** (de pago): ver [Sin cuenta de OpenAI](#sin-cuenta-de-openai-google-gemini-gratis).
+
 ---
 
 ## Inicio rápido
@@ -19,7 +21,7 @@ python3 setup_web.py    # formulario web: configurás, desplegás y probás desd
 
 `setup_web.py` levanta un asistente en tu propio equipo (solo Python 3, sin instalar nada) y muestra en la terminal una URL del tipo `http://127.0.0.1:8099/?t=...`. Abrila en el navegador; tiene tres pasos:
 
-1. **Configuración:** la API key de OpenAI (con botón **Validar**, que consulta a OpenAI sin gastar crédito), correo y contraseña del administrador, puerto y zona horaria. Los secretos van enmascarados.
+1. **Configuración:** el **proveedor de IA** (Gemini gratis u OpenAI) y su API key (con botón **Validar**, que consulta al proveedor sin gastar crédito), correo y contraseña del administrador, puerto y zona horaria. Los secretos van enmascarados.
 2. **Desplegar:** guarda `.env`, levanta los contenedores y muestra el registro en vivo (la primera vez descarga ~2.5 GB).
 3. **Probar:** chequeos automáticos (n8n, login, credenciales, pgvector), botón **Vectorizar manual**, y un buscador que muestra los **4 trozos del manual más cercanos a tu pregunta**, que es justo lo que recibe el agente antes de responder. Incluye enlaces para abrir n8n y el chat con el agente.
 
@@ -37,7 +39,8 @@ Si el servidor es remoto, abrí un túnel y usá la misma URL en tu navegador: `
 
 ```
   Editable
-   1) OpenAI API key        sk-...ab12
+   9) AI provider           gemini (free tier; models gemini-2.5-flash + gemini-embedding-001)
+   1) Gemini API key        AIz...wxyz
    2) Admin email           admin@example.com
    3) Admin password        Dem...f1
    4) Admin name            Demo RAG
@@ -48,22 +51,34 @@ Si el servidor es remoto, abrí un túnel y usá la misma URL en tu navegador: `
    7) Database password     c59...19e1
    8) n8n encryption key    627...2f3a
 
-  [1-8] edit   [v] show/hide secrets   [s] save   [d] save and deploy   [q] quit
+  [1-9] edit   [v] show/hide secrets   [s] save   [d] save and deploy   [q] quit
 ```
 
-1. Pulsá **`1`** y pegá tu API key de OpenAI (no se ve mientras escribís).
+1. Pulsá **`9`** para elegir el proveedor (Gemini u OpenAI) y **`1`** para pegar su API key (no se ve mientras escribís).
 2. Revisá o cambiá lo demás. La contraseña del administrador se genera sola; con `g` en la opción 3 generás otra.
 3. Pulsá **`d`** y confirmá: guarda `.env`, levanta los contenedores (la primera vez descarga ~2.5 GB de imágenes) y avisa cuando n8n está listo.
 
-La contraseña de la base de datos y la clave de cifrado se generan solas y quedan **bloqueadas** una vez desplegado, porque cambiarlas rompería los datos y las credenciales guardadas. Para volver a abrir la pantalla y, por ejemplo, cambiar la API key, ejecutá `./setup.sh` de nuevo. Sin terminal interactiva también sirve `./setup.sh sk-tu-key`, que crea el `.env` sin pantalla, y luego `docker compose up -d`.
+La contraseña de la base de datos y la clave de cifrado se generan solas y quedan **bloqueadas** una vez desplegado, porque cambiarlas rompería los datos y las credenciales guardadas. Para volver a abrir la pantalla y, por ejemplo, cambiar la API key, ejecutá `./setup.sh` de nuevo. Sin terminal interactiva también sirve `./setup.sh gemini AIza...` o `./setup.sh openai sk-...`, que crean el `.env` sin pantalla; luego `docker compose up -d`.
 
 Abrí **http://localhost:5678** e ingresá con el correo y la contraseña de la pantalla (también están en `.env`). Ya vas a encontrar:
 
 - La cuenta de administrador creada.
-- Las credenciales de **Postgres** y **OpenAI** creadas y asignadas a los nodos (nada en rojo).
+- Las credenciales de **Postgres** y del proveedor de IA creadas y asignadas a los nodos (nada en rojo).
 - Los dos flujos importados.
 
-**Requisitos:** Docker con Compose, una **API key de OpenAI** con crédito, ~1 GB de RAM libre y `bash` (Linux, macOS o WSL en Windows).
+**Requisitos:** Docker con Compose, una **API key** (Google Gemini gratis, u OpenAI con crédito), ~1 GB de RAM libre y `bash` (Linux, macOS o WSL en Windows).
+
+## Sin cuenta de OpenAI: Google Gemini (gratis)
+
+1. Creá una key en <https://aistudio.google.com/apikey> (cuenta de Google, sin tarjeta).
+2. En el asistente web (o en `setup.sh`, opción `9`) elegí **Google Gemini** y pegá la key. A mano, en `.env`: `AI_PROVIDER=gemini` y `GEMINI_API_KEY=...`.
+3. Desplegá. Al arrancar, los flujos se adaptan solos: los nodos de OpenAI se reemplazan por los de Gemini (`gemini-embedding-001` para los vectores y `gemini-2.5-flash` para el chat; se pueden cambiar con `GEMINI_EMBED_MODEL` y `GEMINI_CHAT_MODEL` en `.env`).
+
+Tené en cuenta:
+
+- **Privacidad:** según los [términos de la API de Gemini](https://ai.google.dev/gemini-api/terms), en el nivel gratuito Google puede usar lo que enviás para mejorar sus productos y revisores humanos pueden leerlo. Usalo solo con manuales **no confidenciales**, como el de ejemplo. Con facturación activada Google indica que no lo usa.
+- **Límites bajos y cambiantes:** los [límites del nivel gratuito](https://ai.google.dev/gemini-api/docs/rate-limits) varían por modelo y cambian con el tiempo; consultá los de tu cuenta en AI Studio. Si te quedás sin cuota vas a ver errores `429`.
+- **Cambiar de proveedor obliga a vectorizar de nuevo:** los vectores de un proveedor no sirven para otro. El botón **Vectorizar manual** del asistente borra los anteriores y los vuelve a crear.
 
 ## Usar la demo
 
@@ -115,8 +130,8 @@ docker compose exec db psql -U rag -d rag -c "DROP TABLE manuales;"
 |---|---|---|
 | **n8n** `2.42.7` | Orquesta los flujos (ingesta y chat) sin escribir código | Interfaz web en `http://localhost:5678` |
 | **PostgreSQL 18 + pgvector** `0.8.x` | Guarda los vectores y busca por cercanía | Imagen `pgvector/pgvector:pg18` |
-| **OpenAI `text-embedding-3-small`** | Convierte texto en vectores (1536 dimensiones) | Requiere API key |
-| **OpenAI `gpt-4o-mini`** | El modelo que redacta la respuesta | Requiere API key |
+| **Embeddings:** Gemini `gemini-embedding-001` (gratis) u OpenAI `text-embedding-3-small` | Convierte texto en vectores | Requiere API key |
+| **Chat:** Gemini `gemini-2.5-flash` (gratis) u OpenAI `gpt-4o-mini` | El modelo que redacta la respuesta | Requiere API key |
 
 Dos contenedores (`db` y `n8n`). Los modelos de OpenAI son llamadas externas.
 
@@ -127,12 +142,12 @@ Un script (`scripts/bootstrap.sh`) corre antes de n8n y, con los valores del `.e
 | Qué | Cuándo |
 |---|---|
 | Crea la **cuenta de administrador** (`OWNER_EMAIL` / `OWNER_PASSWORD`) | Primer arranque |
-| Crea las **credenciales** de Postgres y OpenAI, con IDs fijos que los flujos ya referencian | **En cada arranque** (así un cambio de API key se aplica) |
-| Importa los **dos flujos** | Solo la primera vez, para no pisar cambios hechos en la interfaz |
+| Crea las **credenciales** de Postgres, OpenAI y Gemini, con IDs fijos que los flujos ya referencian | **En cada arranque** (así un cambio de API key se aplica) |
+| Importa los **dos flujos**, adaptados al proveedor elegido (`AI_PROVIDER`) | La primera vez y cada vez que cambia el proveedor; en un reinicio normal no se pisan los cambios hechos en la interfaz |
 
 Si preferís crear tu propia cuenta en la interfaz, dejá `OWNER_PASSWORD` vacío en `.env`.
 
-**Cambiar la API key de OpenAI:** editá `OPENAI_API_KEY` en `.env` y ejecutá `docker compose up -d --force-recreate n8n`.
+**Cambiar una API key:** editá `OPENAI_API_KEY` o `GEMINI_API_KEY` en `.env` y ejecutá `docker compose up -d --force-recreate n8n`.
 
 ---
 
@@ -180,17 +195,18 @@ docker compose down -v             # apagar y BORRAR todo (flujos, credenciales,
 Probado en una **copia limpia del repo, sin nada previo**, con `./setup.sh` y `docker compose up -d`:
 
 - El **formulario web** (`setup_web.py`) pasó 45 pruebas automáticas contra su API, sobre una copia limpia: seguridad (token, `Host` ajeno), validaciones, guardado de `.env` (permisos 600), despliegue, chequeos, vectorización, búsqueda (4 trozos ordenados por cercanía) y redespliegue sin perder los vectores. El JavaScript de la página se validó sintácticamente, pero **la interfaz no se revisó visualmente en un navegador**: si algo se ve raro, avisá.
+- El **proveedor Gemini** se probó contra un servidor que imita la API de Google (no contra Google): validación de la key, despliegue, adaptación de los flujos (nodos, nombres, conexiones y credenciales), vectorización sin duplicar, búsqueda y el **cambio de proveedor** en caliente (los flujos se reimportan solos y el asistente avisa si no coinciden con el `.env`).
 - La **pantalla de configuración** (`./setup.sh`) se probó de punta a punta: editar la key y el puerto, desplegar, y comprobar que la key llega a la credencial de n8n. También se comprobó que rechaza entradas inválidas y que, sobre un despliegue existente, bloquea la clave de la base y la de cifrado.
 - El administrador se crea solo y **el login funciona** con las credenciales generadas.
 - Se crean las dos credenciales y los dos flujos, ya enlazados (sin nodos en rojo).
 - Con una API key inválida, la ingesta llega hasta OpenAI y este responde `401`: la cadena completa está cableada.
 - Con un servidor de embeddings **simulado y compatible con OpenAI**, la ingesta termina en `success`: se guardan **4 trozos de 1536 dimensiones** en pgvector, con su texto y metadatos, y la búsqueda por cercanía devuelve el orden esperado (distancia 0 contra sí mismo).
 
-**No verificado:** una ejecución con una API key real de OpenAI, ni las **respuestas del agente de chat** (el nodo del modelo no se ejecutó). Si al probarlo un parámetro de un nodo difiere, ajustalo en la interfaz: los flujos están hechos para n8n `2.42.7`.
+**No verificado:** ninguna ejecución con una API key real (ni de OpenAI ni de Google), por lo que no se comprobaron las respuestas reales de la API de Gemini, los nombres de modelo vigentes ni sus límites gratuitos, ni las **respuestas del agente de chat** (el nodo del modelo de chat no se ejecutó). Si al probarlo un parámetro de un nodo o un modelo difiere, ajustalo en la interfaz o con `GEMINI_CHAT_MODEL` / `GEMINI_EMBED_MODEL`: los flujos están hechos para n8n `2.42.7`.
 
 ## Notas importantes
 
-- **Confidencialidad:** el texto de los manuales **se envía a OpenAI** para vectorizarlo y para responder. Si el manual es propietario o confidencial, usá antes un modelo local (ver abajo).
+- **Confidencialidad:** el texto de los manuales **se envía al proveedor de IA elegido** (OpenAI o Google) para vectorizarlo y para responder. Si el manual es propietario o confidencial, usá antes un modelo local (ver abajo).
 - **El mismo modelo de embeddings** tiene que usarse en la ingesta y en el chat. Si cambiás uno, hay que volver a vectorizar todo (las dimensiones no coinciden).
 - Los secretos viven en `.env`, que **no se sube a git**. Guardá `N8N_ENCRYPTION_KEY`: sin ella no se pueden descifrar las credenciales guardadas en n8n.
 - Cada servicio tiene un tope de memoria en `docker-compose.yml` (`db` 300 MB, `n8n` 700 MB) para que un pico no tumbe el servidor.
@@ -214,6 +230,7 @@ Probado en una **copia limpia del repo, sin nada previo**, con `./setup.sh` y `d
 ├── docker-compose.yml          # n8n + PostgreSQL con pgvector
 ├── .env.example                # plantilla de configuración
 ├── scripts/bootstrap.sh        # crea admin, credenciales e importa flujos al arrancar
+├── scripts/adapt-workflows.js  # adapta los flujos al proveedor (openai | gemini)
 ├── db/init.sql                 # activa la extensión vector
 ├── manuales/                   # documentos a vectorizar
 │   └── manual-ejemplo-monitor-m100.md
