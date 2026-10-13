@@ -28,6 +28,8 @@ OPENAI_BASE = os.environ.get("RAG_OPENAI_BASE_URL", "https://api.openai.com/v1")
 EMBED_MODEL = "text-embedding-3-small"
 TOKEN = secrets.token_urlsafe(16)
 SEP = "\x1f"
+IDLE_MINUTES = float(os.environ.get("WIZARD_IDLE_MINUTES", "0"))  # 0 = never stop
+LAST_ACTIVITY = [time.time()]
 
 KEYS = ["POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB", "N8N_ENCRYPTION_KEY", "N8N_PORT",
         "GENERIC_TIMEZONE", "OWNER_EMAIL", "OWNER_PASSWORD", "OWNER_FIRST_NAME", "OWNER_LAST_NAME",
@@ -378,6 +380,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _send(self, code, payload, ctype="application/json; charset=utf-8"):
+        LAST_ACTIVITY[0] = time.time()
         body = payload.encode() if isinstance(payload, str) else json.dumps(payload).encode()
         self.send_response(code)
         self.send_header("Content-Type", ctype)
@@ -544,7 +547,7 @@ async function api(path, body) {
 function say(el, text, cls) { el.textContent = text; el.className = 'msg ' + (cls || ''); }
 
 async function load() {
-  S = await api('/api/state');
+  S = await api('api/state');
   $('email').value = S.owner_email; $('fn').value = S.owner_first_name;
   $('ln').value = S.owner_last_name; $('port').value = S.port; $('tz').value = S.timezone;
   $('keyHint').textContent = S.has_key ? 'Guardada: ' + S.key_hint + ' (dejá el campo vacío para conservarla)' : 'Todavía no hay una API key guardada.';
@@ -562,7 +565,7 @@ function payload() {
   return p;
 }
 async function save(extra) {
-  const r = await api('/api/save', Object.assign(payload(), extra || {}));
+  const r = await api('api/save', Object.assign(payload(), extra || {}));
   if (!r.ok) { say($('saveMsg'), r.errors.join(' '), 'bad'); return false; }
   say($('saveMsg'), r.generated_password ? 'Guardado. Contraseña generada: ' + r.generated_password + ' (guardala, también está en .env).' : 'Guardado en .env.', 'ok');
   $('key').value = ''; $('pw').value = ''; await load(); return true;
@@ -572,7 +575,7 @@ $('genPw').onclick = () => save({ owner_password_generate: true }).catch(e => sa
 $('showKey').onclick = () => { const on = $('key').type === 'password'; $('key').type = on ? 'text' : 'password'; $('showKey').textContent = on ? 'Ocultar' : 'Ver'; $('showKey').setAttribute('aria-pressed', on); };
 $('valKey').onclick = async () => {
   say($('keyMsg'), 'Validando...', '');
-  try { const r = await api('/api/validate-key', { openai_api_key: $('key').value }); say($('keyMsg'), r.detail, r.ok ? 'ok' : 'bad'); }
+  try { const r = await api('api/validate-key', { openai_api_key: $('key').value }); say($('keyMsg'), r.detail, r.ok ? 'ok' : 'bad'); }
   catch (e) { say($('keyMsg'), String(e), 'bad'); }
 };
 
@@ -581,7 +584,7 @@ function poll(onDone) {
   clearInterval(timer);
   timer = setInterval(async () => {
     try {
-      const j = await api('/api/job'); const log = $('log'); log.hidden = false; log.textContent = j.log; log.scrollTop = log.scrollHeight;
+      const j = await api('api/job'); const log = $('log'); log.hidden = false; log.textContent = j.log; log.scrollTop = log.scrollHeight;
       if (!j.running) { clearInterval(timer); onDone(j); }
     } catch (e) { clearInterval(timer); }
   }, 1000);
@@ -590,7 +593,7 @@ $('deploy').onclick = async () => {
   $('deploy').disabled = true; say($('deployState'), 'Guardando...', '');
   try {
     if (!(await save())) { $('deploy').disabled = false; say($('deployState'), 'Corregí los errores de la configuración.', 'bad'); return; }
-    const r = await api('/api/deploy', {});
+    const r = await api('api/deploy', {});
     if (!r.ok) { say($('deployState'), r.error, 'bad'); $('deploy').disabled = false; return; }
     say($('deployState'), 'Desplegando...', '');
     poll(async j => { $('deploy').disabled = false; say($('deployState'), j.ok ? 'Listo. n8n está en marcha.' : 'Falló el despliegue: revisá el registro.', j.ok ? 'ok' : 'bad'); await load(); if (j.ok) runChecks(); });
@@ -599,7 +602,7 @@ $('deploy').onclick = async () => {
 async function runChecks() {
   const ul = $('checks'); ul.replaceChildren();
   try {
-    const r = await api('/api/checks');
+    const r = await api('api/checks');
     for (const c of r.checks) {
       const li = document.createElement('li'); const m = document.createElement('span'); m.textContent = c.ok ? '✓' : '✗'; m.className = c.ok ? 'ok' : 'bad';
       const t = document.createElement('span'); t.textContent = c.name + (c.detail ? ' - ' + c.detail : '');
@@ -611,7 +614,7 @@ $('runChecks').onclick = runChecks;
 $('ingest').onclick = async () => {
   $('ingest').disabled = true;
   try {
-    const r = await api('/api/ingest', {});
+    const r = await api('api/ingest', {});
     if (!r.ok) { alert(r.error); $('ingest').disabled = false; return; }
     poll(j => { $('ingest').disabled = false; const t = j.log || ''; $('log').textContent = j.ok ? t + '\nVectorización completada.' : t + '\nLa vectorización falló.'; runChecks(); });
   } catch (e) { $('ingest').disabled = false; }
@@ -619,7 +622,7 @@ $('ingest').onclick = async () => {
 $('ask').onclick = async () => {
   const box = $('results'); box.replaceChildren();
   try {
-    const r = await api('/api/search', { q: $('q').value });
+    const r = await api('api/search', { q: $('q').value });
     if (!r.ok) { const d = document.createElement('div'); d.className = 'msg bad'; d.textContent = r.error; box.append(d); return; }
     if (!r.rows.length) { const d = document.createElement('div'); d.className = 'msg warn'; d.textContent = 'Sin resultados. ¿Ya vectorizaste el manual?'; box.append(d); }
     r.rows.forEach((row, i) => {
@@ -651,6 +654,16 @@ def main():
         webbrowser.open(url)
     except Exception:
         pass
+    if IDLE_MINUTES > 0:
+        def watchdog():
+            while True:
+                time.sleep(20)
+                if not JOB["running"] and time.time() - LAST_ACTIVITY[0] > IDLE_MINUTES * 60:
+                    print(f"\nNo activity for {IDLE_MINUTES:g} min: stopping.", flush=True)
+                    server.shutdown()
+                    return
+        threading.Thread(target=watchdog, daemon=True).start()
+        print(f"  Auto-stop after {IDLE_MINUTES:g} min without activity.\n", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

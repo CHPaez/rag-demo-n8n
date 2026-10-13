@@ -25,7 +25,7 @@ python3 setup_web.py    # formulario web: configurás, desplegás y probás desd
 
 Si el servidor es remoto, abrí un túnel y usá la misma URL en tu navegador: `ssh -L 8099:127.0.0.1:8099 usuario@IP_DEL_SERVIDOR`.
 
-> **Seguridad del asistente:** escucha solo en `127.0.0.1`, exige el token de un solo uso de la URL y rechaza peticiones con un `Host` ajeno. Se detiene con `Ctrl+C`. Si el puerto 8099 está ocupado: `WIZARD_PORT=8123 python3 setup_web.py`.
+> **Seguridad del asistente:** escucha solo en `127.0.0.1`, exige el token de un solo uso de la URL y rechaza peticiones con un `Host` ajeno. Se detiene con `Ctrl+C`. Si el puerto 8099 está ocupado: `WIZARD_PORT=8123 python3 setup_web.py`. Con `WIZARD_IDLE_MINUTES=60` se apaga solo tras 60 minutos sin actividad (útil si lo publicás detrás de un proxy; la página usa rutas relativas, así que funciona bajo un prefijo como `/wizard/`. El proxy debe pedir autenticación y enviar `Host: 127.0.0.1:8099`).
 
 ### Opción B: pantalla en la terminal
 
