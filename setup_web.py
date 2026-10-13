@@ -129,10 +129,11 @@ def http_json(url, payload=None, headers=None, timeout=20):
 def get_state():
     cfg, existing = load_cfg()
     port = cfg["N8N_PORT"]
+    forced = os.environ.get("WIZARD_N8N_URL", "").rstrip("/")
+    local_url = forced or f"http://localhost:{port}"
     return {
         "docker": docker_ok(), "existing": existing, "deployed": deployed(),
-        "n8n_url": f"http://localhost:{port}", "chat_url": f"http://localhost:{port}/workflow/ragChatAgente02",
-        "ingest_url": f"http://localhost:{port}/workflow/ragIngesta01",
+        "n8n_url": local_url, "n8n_forced": bool(forced),
         "port": port, "timezone": cfg["GENERIC_TIMEZONE"], "owner_email": cfg["OWNER_EMAIL"],
         "owner_first_name": cfg["OWNER_FIRST_NAME"], "owner_last_name": cfg["OWNER_LAST_NAME"],
         "has_owner_password": cfg["OWNER_PASSWORD"] != "", "owner_password_hint": hint(cfg["OWNER_PASSWORD"]),
@@ -619,7 +620,15 @@ async function load() {
   $('dbpw').textContent = S.db_password_hint; $('enc').textContent = S.enc_key_hint;
   $('lockHint').textContent = S.deployed ? 'Bloqueadas: ya hay un despliegue y cambiarlas rompería los datos y las credenciales guardadas.' : 'Se generan solas y quedan bloqueadas tras el primer despliegue.';
   $('dockerWarn').hidden = S.docker;
-  $('openN8n').href = S.n8n_url; $('openChat').href = S.chat_url;
+  setLinks();
+}
+// Served on localhost (direct or via SSH tunnel): n8n is on localhost:PORT.
+// Served on a public host behind a proxy: n8n lives at the root of that same host.
+function setLinks() {
+  const here = ['localhost', '127.0.0.1'].includes(location.hostname);
+  const base = (S.n8n_forced || here) ? S.n8n_url : location.origin;
+  $('openN8n').href = base + '/';
+  $('openChat').href = base + '/workflow/ragChatAgente02';
 }
 const provider = () => document.querySelector('input[name=prov]:checked').value;
 function updateProvider() {
