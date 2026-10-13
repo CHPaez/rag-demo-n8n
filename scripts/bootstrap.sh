@@ -1,7 +1,7 @@
 #!/bin/sh
 # Runs before n8n starts: creates credentials and imports workflows from .env values.
 # Idempotent: credentials are refreshed on every start (so a new API key applies);
-# workflows are imported on the first start and again only when AI_PROVIDER changes,
+# workflows are imported on the first start and again only when AI_PROVIDER or the Gemini models change,
 # so edits made in the UI are not overwritten on a normal restart.
 set -eu
 
@@ -54,7 +54,9 @@ elif [ "$PROVIDER" = openai ] && [ -z "${OPENAI_API_KEY:-}" ]; then
 fi
 
 # --- 3. Workflows (first start, or when the provider changed) ---------------------------
-if [ ! -f "$MARKER" ] || [ "$(cat "$MARKER" 2>/dev/null)" != "$PROVIDER" ]; then
+# The marker records provider + models, so changing any of them re-imports the workflows.
+STATE="$PROVIDER:${GEMINI_CHAT_MODEL:-}:${GEMINI_EMBED_MODEL:-}"
+if [ ! -f "$MARKER" ] || [ "$(cat "$MARKER" 2>/dev/null)" != "$STATE" ]; then
   rm -rf "$WF_DIR"
   ok=1
   node /scripts/adapt-workflows.js /workflows "$WF_DIR" >/dev/null || ok=0
@@ -64,7 +66,7 @@ if [ ! -f "$MARKER" ] || [ "$(cat "$MARKER" 2>/dev/null)" != "$PROVIDER" ]; then
     done
   fi
   if [ "$ok" = 1 ]; then
-    printf '%s' "$PROVIDER" > "$MARKER"
+    printf '%s' "$STATE" > "$MARKER"
     echo "[bootstrap] Workflows imported for provider: $PROVIDER."
   else
     echo "[bootstrap] WARNING: some workflows failed to import; retry with a restart."

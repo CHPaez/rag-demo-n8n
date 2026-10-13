@@ -133,7 +133,7 @@ screen() {
   echo
   echo "  Editable"
   if [ "$AI_PROVIDER" = gemini ]; then
-    printf '   9) AI provider           gemini (free tier; models gemini-2.5-flash + gemini-embedding-001)\n'
+    printf '   9) AI provider           gemini (free tier; models gemini-flash-latest + gemini-embedding-001)\n'
   else
     printf '   9) AI provider           openai (paid; models gpt-4o-mini + text-embedding-3-small)\n'
   fi

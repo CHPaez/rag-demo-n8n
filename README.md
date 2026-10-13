@@ -39,7 +39,7 @@ Si el servidor es remoto, abrí un túnel y usá la misma URL en tu navegador: `
 
 ```
   Editable
-   9) AI provider           gemini (free tier; models gemini-2.5-flash + gemini-embedding-001)
+   9) AI provider           gemini (free tier; models gemini-flash-latest + gemini-embedding-001)
    1) Gemini API key        AIz...wxyz
    2) Admin email           admin@example.com
    3) Admin password        Dem...f1
@@ -72,7 +72,7 @@ Abrí **http://localhost:5678** e ingresá con el correo y la contraseña de la 
 
 1. Creá una key en <https://aistudio.google.com/apikey> (cuenta de Google, sin tarjeta).
 2. En el asistente web (o en `setup.sh`, opción `9`) elegí **Google Gemini** y pegá la key. A mano, en `.env`: `AI_PROVIDER=gemini` y `GEMINI_API_KEY=...`.
-3. Desplegá. Al arrancar, los flujos se adaptan solos: los nodos de OpenAI se reemplazan por los de Gemini (`gemini-embedding-001` para los vectores y `gemini-2.5-flash` para el chat; se pueden cambiar con `GEMINI_EMBED_MODEL` y `GEMINI_CHAT_MODEL` en `.env`).
+3. Desplegá. Al arrancar, los flujos se adaptan solos: los nodos de OpenAI se reemplazan por los de Gemini (`gemini-embedding-001` para los vectores y `gemini-flash-latest` para el chat; se pueden cambiar con `GEMINI_EMBED_MODEL` y `GEMINI_CHAT_MODEL` en `.env`).
 
 Tené en cuenta:
 
@@ -131,7 +131,7 @@ docker compose exec db psql -U rag -d rag -c "DROP TABLE manuales;"
 | **n8n** `2.42.7` | Orquesta los flujos (ingesta y chat) sin escribir código | Interfaz web en `http://localhost:5678` |
 | **PostgreSQL 18 + pgvector** `0.8.x` | Guarda los vectores y busca por cercanía | Imagen `pgvector/pgvector:pg18` |
 | **Embeddings:** Gemini `gemini-embedding-001` (gratis) u OpenAI `text-embedding-3-small` | Convierte texto en vectores | Requiere API key |
-| **Chat:** Gemini `gemini-2.5-flash` (gratis) u OpenAI `gpt-4o-mini` | El modelo que redacta la respuesta | Requiere API key |
+| **Chat:** Gemini `gemini-flash-latest` (gratis) u OpenAI `gpt-4o-mini` | El modelo que redacta la respuesta | Requiere API key |
 
 Dos contenedores (`db` y `n8n`). Los modelos de OpenAI son llamadas externas.
 
@@ -195,14 +195,15 @@ docker compose down -v             # apagar y BORRAR todo (flujos, credenciales,
 Probado en una **copia limpia del repo, sin nada previo**, con `./setup.sh` y `docker compose up -d`:
 
 - El **formulario web** (`setup_web.py`) pasó 45 pruebas automáticas contra su API, sobre una copia limpia: seguridad (token, `Host` ajeno), validaciones, guardado de `.env` (permisos 600), despliegue, chequeos, vectorización, búsqueda (4 trozos ordenados por cercanía) y redespliegue sin perder los vectores. El JavaScript de la página se validó sintácticamente, pero **la interfaz no se revisó visualmente en un navegador**: si algo se ve raro, avisá.
-- El **proveedor Gemini** se probó contra un servidor que imita la API de Google (no contra Google): validación de la key, despliegue, adaptación de los flujos (nodos, nombres, conexiones y credenciales), vectorización sin duplicar, búsqueda y el **cambio de proveedor** en caliente (los flujos se reimportan solos y el asistente avisa si no coinciden con el `.env`).
+- **Con una API key real de Gemini** (nivel gratuito) se comprobó de punta a punta, en un despliegue aislado: validación de la key contra Google, vectorización del manual (4 trozos de 3072 dimensiones), búsqueda semántica con resultados coherentes y el **agente de chat**, que usó la herramienta de búsqueda y respondió con datos exactos del manual (por ejemplo, el significado del código `E-214` y la trama `ORU^R01` completa).
+- Además, el **proveedor Gemini** se probó con un servidor que imita la API de Google para cubrir lo que no se puede forzar contra el servicio real: validación de la key, despliegue, adaptación de los flujos (nodos, nombres, conexiones y credenciales), vectorización sin duplicar, búsqueda y el **cambio de proveedor** en caliente (los flujos se reimportan solos y el asistente avisa si no coinciden con el `.env`).
 - La **pantalla de configuración** (`./setup.sh`) se probó de punta a punta: editar la key y el puerto, desplegar, y comprobar que la key llega a la credencial de n8n. También se comprobó que rechaza entradas inválidas y que, sobre un despliegue existente, bloquea la clave de la base y la de cifrado.
 - El administrador se crea solo y **el login funciona** con las credenciales generadas.
 - Se crean las dos credenciales y los dos flujos, ya enlazados (sin nodos en rojo).
 - Con una API key inválida, la ingesta llega hasta OpenAI y este responde `401`: la cadena completa está cableada.
 - Con un servidor de embeddings **simulado y compatible con OpenAI**, la ingesta termina en `success`: se guardan **4 trozos de 1536 dimensiones** en pgvector, con su texto y metadatos, y la búsqueda por cercanía devuelve el orden esperado (distancia 0 contra sí mismo).
 
-**No verificado:** ninguna ejecución con una API key real (ni de OpenAI ni de Google), por lo que no se comprobaron las respuestas reales de la API de Gemini, los nombres de modelo vigentes ni sus límites gratuitos, ni las **respuestas del agente de chat** (el nodo del modelo de chat no se ejecutó). Si al probarlo un parámetro de un nodo o un modelo difiere, ajustalo en la interfaz o con `GEMINI_CHAT_MODEL` / `GEMINI_EMBED_MODEL`: los flujos están hechos para n8n `2.42.7`.
+**No verificado:** ninguna ejecución con OpenAI (el camino de OpenAI se probó solo con un servidor simulado, no con una key real). Con Gemini, los modelos y límites gratuitos cambian: durante las pruebas `gemini-2.5-flash` ya estaba cerrado a cuentas nuevas (404), por eso el valor por defecto es el alias `gemini-flash-latest`. Si un modelo falla en tu cuenta, cámbialo con `GEMINI_CHAT_MODEL` / `GEMINI_EMBED_MODEL` en `.env`. Los flujos están hechos para n8n `2.42.7`.
 
 ## Notas importantes
 

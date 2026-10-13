@@ -5,7 +5,7 @@ const fs = require('fs');
 
 const [src, dst] = process.argv.slice(2);
 const provider = process.env.AI_PROVIDER === 'gemini' ? 'gemini' : 'openai';
-const chatModel = process.env.GEMINI_CHAT_MODEL || 'gemini-2.5-flash';
+const chatModel = process.env.GEMINI_CHAT_MODEL || 'gemini-flash-latest';
 const embedModel = process.env.GEMINI_EMBED_MODEL || 'gemini-embedding-001';
 const geminiCred = { googlePalmApi: { id: 'ragGeminiCred', name: 'Gemini RAG (auto)' } };
 
